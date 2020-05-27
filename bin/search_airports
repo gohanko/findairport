@@ -1,0 +1,155 @@
+#!/usr/bin/perl -Ilib -Iextlib/lib/perl5
+
+use strict;
+use warnings;
+use feature 'say';
+use Getopt::Long;
+use Pod::Usage;
+use Text::CSV;
+use Geo::Coder::Google;
+use Airport::Search;
+use Airport::Data;
+
+# Default values.
+my $filename = 'data/iata_airports.csv';
+my $result_limit = 3;
+my $match_some = 0;
+my $match_full = 0;
+my $longitude;
+my $latitude;
+my $max_radius = 2;
+my $address;
+my $help;
+
+=head1 SYNOPSIS
+
+    ./bin/search_airports [options]
+
+=head2 Options
+     
+=over 12
+
+=item filename
+
+The file path to the file containing the dataset which contains information of airports around the world.
+
+=item result_limit
+
+Limits the amount of results returned. Default is 3.
+
+=item match_some
+
+A string is passed which matches some parts of a word in an airport's name.
+
+=item match_full
+
+A string is passed which fully match a word in the airport's name.
+
+=item longitude
+
+Longitude coordinate of the area in which to search.
+
+=item latitude
+
+Latitude coordinate of the area in which to search.
+
+=item max_radius
+
+Limit to radius around the area you want to search. Default is 2.
+
+=item address
+
+Address of the area where you want to search (uses Google Maps API)
+
+=item help
+
+Prints out usage information.
+
+=back
+
+=cut
+
+GetOptions(
+    "filename=s" => \$filename,
+    "result_limit=i" => \$result_limit,
+    "match_some=s" => \$match_some,
+    "match_full=s" => \$match_full,
+    "longitude=f" => \$longitude,
+    "latitude=f" => \$latitude,
+    "max_radius=f" => \$max_radius,
+    "address=s" => \$address,
+    "help" => \$help,
+);
+
+pod2usage(q(-verbose) => 99) if $help;
+
+
+my @airports = @{Airport::Data::parse_airports($filename)};
+
+sub find_airport_by_coordinates {
+    my %param = @_;
+    my $passed_in_latitude = $param{'latitude'};
+    my $passed_in_longitude = $param{'longitude'};
+
+    my @airports_found = @{Airport::Search::get_latlong_matching_airports(
+        airports => \@airports,
+        lat => $passed_in_latitude,
+        lng => $passed_in_longitude,
+        max_radius => $param{'max_radius'},
+    )};
+    @airports_found = splice(@airports_found, 0, $result_limit);
+    my $airports_found_length = scalar(@airports_found);
+
+    say "Up to $airports_found_length airports near [$passed_in_latitude, $passed_in_longitude] in iata_airports.csv :";
+    return \@airports_found;
+}
+
+sub main {
+    if ($help) {
+        say "HALOOO"
+    }
+
+    my $geocoder = Geo::Coder::Google->new(
+        apiver => 3,
+        key => '***REMOVED***'
+    );
+
+    my @airports_found;
+    if ($match_some || $match_full) { # Search based on names.
+        @airports_found = @{Airport::Search::get_name_matching_airports(
+            airports => \@airports,
+            match_some => $match_some,
+            match_full => $match_full,
+        )};
+        @airports_found = splice(@airports_found, 0, $result_limit);
+        
+        my $airports_found_length = scalar(@airports_found);
+        my $near = $match_some || $match_full;
+        
+        say "Up to $airports_found_length airports near $near in iata_airports.csv :";
+    } elsif (defined $latitude && defined $longitude) { # Search using user provided coordinates.
+        @airports_found = @{find_airport_by_coordinates(
+            latitude => $latitude,
+            longitude => $longitude,
+            max_radius => $max_radius,
+        )};
+    } elsif ($address) { # Search using user inputted address which is passed to Google Maps to get coordinates.
+        my $location = $geocoder->geocode(location => $address);
+
+        if ($location) {
+            @airports_found = @{find_airport_by_coordinates(
+                latitude => $location->{'geometry'}{'location'}{'lat'},
+                longitude => $location->{'geometry'}{'location'}{'lng'},
+                max_radius => $max_radius,
+            )};
+        } else {
+            say "Address not found";
+        }
+    }
+
+    foreach my $airport (@airports_found) {
+        say "- $airport->{'name'}";
+    };
+}
+
+main();
